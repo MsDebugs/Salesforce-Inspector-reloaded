@@ -49,18 +49,20 @@ The creation of Connected Apps is soon to be deprecated (planned for Spring 26')
 
     >**Warning**
     >If you don't select the `web` scope, you might not be able to use the Login As Incognito.
-4. Configure Security settings:
+4. Flow Enablement
+   * Check the `Enable Authorization Code and Credentials Flow` and then check `Require user credentials in the POST body for Authorization Code and Credentials Flow`
+5. Configure Security settings:
    * **IMPORTANT: Deselect** (disable) `Require secret for Web Server Flow`.
    * Select (enable) `Require Proof Key for Code Exchange (PKCE) extension for Supported Authorization Flows`.
-5. Get Consumer Key and save it in the Options page
+6. Get Consumer Key and save it in the Options page
 
     <img alt="Option button" width="276" alt="image" src="https://github.com/tprouvot/Salesforce-Inspector-reloaded/assets/35368290/14cc8aac-5ffc-4747-9da1-ba892231ace1">
 
-6. Enter the consumer key
+7. Enter the consumer key
 
     <img alt="Client Id" width="849" src="https://github.com/tprouvot/Salesforce-Inspector-reloaded/assets/35368290/b1edfea1-5a56-4f42-8945-e452a7ab5cf5">
 
-7. Refresh page and generate new token
+8. Refresh page and generate new token
 
     <img width="275" alt="Generate Token" src="https://github.com/tprouvot/Salesforce-Inspector-reloaded/assets/35368290/931df75d-42ac-4667-ab3f-35f6b6b65a66">
 
@@ -277,6 +279,11 @@ Warning: Salesforce is slower for users who have debug mode enabled.
 
 <img width="278" alt="Enable Debug Mode" src="https://github.com/user-attachments/assets/f4dabb96-6b1d-48a1-828d-cc7d5da92e57" />
 
+## Enable API Call Debug Statistics
+
+Sometimes we may want to know which queries are performed to the Salesforce backend (by type, method, endpoint ...)
+This can help to correlate logs in Salesforce and what is performed by Salesforce Inspector Reloaded extension
+
 ## Customize extension's favicon
 
 From the option page, you can customize the default favicon by:
@@ -429,6 +436,10 @@ Because the IsPortalEnabled field does not exist in orgs where there is no porta
 3. Enable the filters you want to apply:
    * **Exclude Portal users** - Hides users who have portal access enabled
    * **Exclude Inactive users** - Hides users who are marked as inactive
+
+### Dynamic Popup Height
+
+You can leverage more window height in the popup, to reduce the scroll. To enable this feature, go to User Experience -> Enable Dynamic Popup Height and check it.
 
 ## Generate a package.xml from a deployment
 

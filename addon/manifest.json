@@ -11,7 +11,9 @@
   },
   "minimum_chrome_version": "88",
   "permissions": [
-    "cookies"
+    "cookies",
+    "storage",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://*.salesforce.com/*",
@@ -79,6 +81,7 @@
         "explore-api.html",
         "rest-explore.html",
         "limits.html",
+        "api-statistics.html",
         "inject.js",
         "field-creator.html",
         "options.html",
@@ -166,6 +169,9 @@
     },
     "debug-log": {
       "description": "Logs Viewer"
+    },
+    "api-statistics": {
+      "description": "API Statistics"
     }
   }
 }
