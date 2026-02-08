@@ -15,13 +15,12 @@ class Model {
     this.spinnerCount = 0;
 
     this.userInfoModel = new UserInfoModel(createSpinForMethod(this));
-
+    this.logTabs = []; 
+    this.activeTabIndex = -1;
     this.logs = [];
     this.selectedIds = new Set();
     this.filters = {userId: "", start: "", end: ""};
-    this.previewLog = null; // {id, body, fileName}
-    this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
-    this.previewFilter = ""; // grep-like filter for log lines
+    this.previewLog = null; // {id, body, fileName, previewFilter, previewSearch}
     this.filterTemplates = [
       {label: "No filter", value: ""},
       {label: "USER_DEBUG", value: "USER_DEBUG"},
@@ -265,7 +264,7 @@ Please structure your response in a clear, organized manner using these sections
       const promptTemplate = new PromptTemplate(templateName);
 
       // Use filtered log content if filter is active, otherwise full log
-      const logContent = this.previewFilter
+      const logContent = this.previewLog?.previewFilter
         ? this.getFilteredLogBody()
         : (this.previewLog?.body || "");
 
@@ -639,77 +638,92 @@ Please structure your response in a clear, organized manner using these sections
     return text;
   }
 
-  async preview(id) {
-    this.previewLoading = true;
-    this.previewLog = {id, body: "", fileName: `${id}.log`}; // Show modal immediately with loading state
-    this.didUpdate();
+  setActiveTab(index) { 
+    this.activeTabIndex = index; 
+    this.previewLog = index !== -1 ? this.logTabs[index] : null; 
+    this.didUpdate(); 
+  } 
 
-    // Check if body is already cached for instant display
+  closeTab(index) { 
+    this.logTabs.splice(index, 1); 
+    if (this.activeTabIndex >= this.logTabs.length) { 
+      this.activeTabIndex = this.logTabs.length - 1; 
+    } 
+    this.setActiveTab(this.activeTabIndex); 
+  } 
+
+  async preview(id) {
+    const existingIndex = this.logTabs.findIndex(t => t.id === id); 
+    if (existingIndex !== -1) { 
+      this.setActiveTab(existingIndex); 
+      return; 
+    } 
+
+    const newTab = {
+      id,
+      fileName: `${id}.log`,
+      body: "",
+      isLoading: true,
+      previewFilter: "",
+      previewSearch: { term: "", liveTerm: "", index: 0, count: 0, _timer: 0 }
+    }; 
+    this.logTabs.push(newTab); 
+    this.setActiveTab(this.logTabs.length - 1); 
+
+    this.previewLoading = true; 
+    let text = ""; 
     const cachedBody = this.logBodies.get(id);
     if (cachedBody) {
-      this.previewLog = {id, body: cachedBody, fileName: `${id}.log`};
-      this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
-      this.previewFilter = ""; // Reset filter when opening new log
-      this.previewLoading = false;
-      window.addEventListener("keydown", this._onPreviewKeyDown, true);
-      setTimeout(() => {
-        const inp = document.querySelector(".sfir-preview-search-input");
-        if (inp) inp.focus();
-      }, 0);
-      this.didUpdate();
-      return;
-    }
+      text = cachedBody; 
+    } else { 
+      this.spinnerCount++;
+      try {
+        text = await this.getLogBodyText(id); 
+      } catch (e) {
+        console.error("preview", e);
+        text = "Error loading log"; 
+      } finally {
+        this.spinnerCount--;
+      }
+    } 
 
-    this.spinnerCount++;
-    try {
-      const text = await this.getLogBodyText(id);
-      this.previewLog = {id, body: text, fileName: `${id}.log`};
-      this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
-      this.previewFilter = ""; // Reset filter when opening new log
-      window.addEventListener("keydown", this._onPreviewKeyDown, true);
-      setTimeout(() => {
-        const inp = document.querySelector(".sfir-preview-search-input");
-        if (inp) inp.focus();
-      }, 0);
-    } catch (e) {
-      console.error("preview", e);
-      this.previewLog = {id, body: "Error loading log", fileName: `${id}.log`};
-    } finally {
-      this.previewLoading = false;
-      this.spinnerCount--;
-      this.didUpdate();
-    }
+    newTab.body = text; 
+    newTab.isLoading = false; 
+    this.previewLoading = false; 
+    this.setActiveTab(this.activeTabIndex);  (refresh)
   }
 
   closePreview() {
-    this.previewLog = null;
-    // Reset search state completely when closing preview
-    this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
-    this.previewFilter = "";
-    // Clear cached processed body
-    this._cachedProcessedBody = null;
-    this._cachedFilteredBody = null;
-    if (this.previewSearch && this.previewSearch._timer) {
-      clearTimeout(this.previewSearch._timer);
+    if (this.previewLog) {
+      if (this.previewLog.previewSearch && this.previewLog.previewSearch._timer) {
+        clearTimeout(this.previewLog.previewSearch._timer);
+      }
     }
+    this.previewLog = null;
+    // Clear cached processed body
     window.removeEventListener("keydown", this._onPreviewKeyDown, true);
     this.didUpdate();
   }
 
   applyPreviewFilter(filterText) {
+    if (!this.previewLog) return;
     // Show loading state immediately
     this.previewFilterProcessing = true;
-    this.previewFilter = filterText;
+    this.previewLog.previewFilter = filterText;
     // Clear cache when filter changes
     this._cachedProcessedBody = null;
     this._cachedFilteredBody = null;
+    console.log("Cached body thingy ", this._cachedFilteredBody);
+    console.log("Cached body thingy 2 ", this._cachedProcessedBody);
     this.didUpdate();
 
     // Process filter change asynchronously to avoid blocking UI
     setTimeout(() => {
       try {
         // Reset search when filter changes
-        this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
+        if (this.previewLog) {
+          this.previewLog.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
+        }
         this.previewFilterProcessing = false;
         this.didUpdate();
       } catch (e) {
@@ -722,10 +736,10 @@ Please structure your response in a clear, organized manner using these sections
 
   getFilteredLogBody() {
     if (!this.previewLog || !this.previewLog.body) return "";
-    if (!this.previewFilter) return this.previewLog.body;
+    if (!this.previewLog.previewFilter) return this.previewLog.body;
 
     const lines = this.previewLog.body.split("\n");
-    const patterns = this.previewFilter.split("|").map(p => p.trim()).filter(Boolean);
+    const patterns = this.previewLog.previewFilter.split("|").map(p => p.trim()).filter(Boolean);
 
     if (patterns.length === 0) return this.previewLog.body;
 
@@ -734,39 +748,44 @@ Please structure your response in a clear, organized manner using these sections
     return filteredLines.join("\n");
   }
 
-  // Debounced search update to keep typing smooth in preview
   updatePreviewSearchTermLive(term){
-    if (!this.previewSearch) this.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
-    this.previewSearch.liveTerm = term || "";
-    if (this.previewSearch._timer) clearTimeout(this.previewSearch._timer);
-    this.previewSearch._timer = setTimeout(() => {
+    if (!this.previewLog) return;
+    if (!this.previewLog.previewSearch) this.previewLog.previewSearch = {term: "", liveTerm: "", index: 0, count: 0, _timer: 0};
+    this.previewLog.previewSearch.liveTerm = term || "";
+    if (this.previewLog.previewSearch._timer) clearTimeout(this.previewLog.previewSearch._timer);
+    this.previewLog.previewSearch._timer = setTimeout(() => {
       // Commit the term and reset selection, then re-render to rebuild highlights
-      this.previewSearch.term = this.previewSearch.liveTerm;
-      this.previewSearch.index = 0;
-      this.didUpdate();
+      if (this.previewLog) {
+        this.previewLog.previewSearch.term = this.previewLog.previewSearch.liveTerm;
+        this.previewLog.previewSearch.index = 0;
+        this.didUpdate();
+      }
     }, 200);
   }
 
-  nextPreviewMatch(){
-    const cnt = this.previewSearch.count;
+  nextPreviewMatch() {
+    if (!this.previewLog?.previewSearch) return;
+    const cnt = this.previewLog.previewSearch.count;
     if (!cnt) return;
-    this.previewSearch.index = (this.previewSearch.index + 1) % cnt;
+    this.previewLog.previewSearch.index = (this.previewLog.previewSearch.index + 1) % cnt;
     // Just scroll to the element without re-rendering
     this._scrollToCurrentMatch();
   }
-  prevPreviewMatch(){
-    const cnt = this.previewSearch.count;
+  prevPreviewMatch() {
+    if (!this.previewLog?.previewSearch) return;
+    const cnt = this.previewLog.previewSearch.count;
     if (!cnt) return;
-    this.previewSearch.index = (this.previewSearch.index - 1 + cnt) % cnt;
+    this.previewLog.previewSearch.index = (this.previewLog.previewSearch.index - 1 + cnt) % cnt;
     // Just scroll to the element without re-rendering
     this._scrollToCurrentMatch();
   }
 
   _scrollToCurrentMatch() {
+    if (!this.previewLog?.previewSearch) return;
     // Update the current highlight class without re-rendering the whole component
     const allMarks = document.querySelectorAll(".sfir-highlight");
     allMarks.forEach((mark, idx) => {
-      if (idx === this.previewSearch.index) {
+      if (idx === this.previewLog.previewSearch.index) {
         mark.classList.add("current");
         mark.id = "sfir-current-match";
         mark.scrollIntoView({block: "center", behavior: "smooth"});
@@ -780,7 +799,7 @@ Please structure your response in a clear, organized manner using these sections
     // Force update just the counter display
     const counterEl = document.querySelector(".sfir-search-counter");
     if (counterEl) {
-      counterEl.textContent = `${this.previewSearch.index + 1} / ${this.previewSearch.count}`;
+      counterEl.textContent = `${this.previewLog.previewSearch.index + 1} / ${this.previewLog.previewSearch.count}`;
     }
   }
 
@@ -789,7 +808,7 @@ Please structure your response in a clear, organized manner using these sections
     (async () => {
       try {
         const text = await this.getLogBodyText(id);
-        const blob = new Blob([text], {type: "text/plain"});
+        const blob = new Blob([text], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -1304,37 +1323,37 @@ function LogsTable({model, hideButtonsOption}) {
       className: `slds-is-sortable slds-is-resizable ${sortClass}`,
       scope: "col"
     },
-    h("a", {
-      className: "slds-th__action slds-text-link_reset",
-      role: "button",
-      tabIndex: "0",
-      onClick: () => model.handleSort(label)
-    },
+      h("a", {
+        className: "slds-th__action slds-text-link_reset",
+        role: "button",
+        tabIndex: "0",
+        onClick: () => model.handleSort(label)
+      },
     h("span", {className: "slds-assistive-text"}, "Sort by "),
     h("div", {className: "slds-grid slds-grid_vertical-align-center slds-has-flexi-truncate"},
       h("span", {className: "slds-truncate", title: label}, label),
       h("span", {className: `slds-icon_container slds-icon-utility-arrowdown ${isSorted ? "" : "slds-is-sortable__icon"}`, title: isSorted ? (isAsc ? "Sorted ascending" : "Sorted descending") : "Sort"},
         h("svg", {className: "slds-icon slds-icon_x-small slds-icon-text-default", "aria-hidden": "true"},
           h("use", {xlinkHref: "symbols.svg#arrowdown"})
+            )
+          )
+        )
+      ),
+    h("div", {className: "slds-resizable"},
+        h("input", {
+          type: "range",
+          className: "slds-resizable__input slds-assistive-text",
+          min: "20",
+          max: "1000",
+          "aria-label": `${label} column width`
+        }),
+        h("span", {
+          className: "slds-resizable__handle",
+          onMouseDown: (e) => model.startResize(columnKey, e)
+        },
+      h("span", {className: "slds-resizable__divider"})
         )
       )
-    )
-    ),
-    h("div", {className: "slds-resizable"},
-      h("input", {
-        type: "range",
-        className: "slds-resizable__input slds-assistive-text",
-        min: "20",
-        max: "1000",
-        "aria-label": `${label} column width`
-      }),
-      h("span", {
-        className: "slds-resizable__handle",
-        onMouseDown: (e) => model.startResize(columnKey, e)
-      },
-      h("span", {className: "slds-resizable__divider"})
-      )
-    )
     );
   };
 
@@ -1445,16 +1464,57 @@ function LogsTable({model, hideButtonsOption}) {
             },
             h("svg", {className: "slds-button__icon slds-button__icon_left", "aria-hidden": "true"},
               h("use", {xlinkHref: "symbols.svg#delete"})
-            ),
-            "Delete Selected"
+              ),
+              "Delete Selected"
             )
           )
         )
       )
     ),
-    h("div", {className: "slds-card__body"},
-      h("div", {className: "slds-scrollable_x sfir-logs-table-container"},
-        h("table", {className: "slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped slds-table_fixed-layout sfir-logs-table"},
+    h("div", {className: "slds-card__body slds-p-horizontal_small"},
+      h("div", {className: "panel"}, 
+        model.logTabs.length > 0 && h("div", { className: "log-tabs-container", style: { borderBottom: "1px solid #dddbda", marginBottom: "0.5rem", display: "flex", gap: "2px" } }, 
+          model.logTabs.map((tab, index) => 
+            h("div", { 
+              key: tab.id, 
+              className: `log-tab ${model.activeTabIndex === index ? "active" : ""}`, 
+              style: { 
+                padding: "0.5rem 1rem", 
+                cursor: "pointer", 
+                border: "1px solid #dddbda", 
+                borderBottom: model.activeTabIndex === index ? "1px solid white" : "1px solid #dddbda", 
+                backgroundColor: model.activeTabIndex === index ? "white" : "#f3f2f2", 
+                marginBottom: "-1px", 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "0.5rem" 
+              }, 
+              onClick: () => model.setActiveTab(index) 
+            }, 
+              h("span", { className: "slds-truncate", style: { maxWidth: "150px" } }, tab.fileName), 
+              h("button", { 
+                className: "slds-button slds-button_icon slds-button_icon-small", 
+                onClick: (e) => { e.stopPropagation(); model.closeTab(index); } 
+              }, 
+                h("svg", { className: "slds-button__icon", "aria-hidden": "true" }, 
+                  h("use", { xlinkHref: "symbols.svg#close" }) 
+                ) 
+              ) 
+            ) 
+          ) 
+        ), 
+        model.activeTabIndex !== -1 && model.logTabs[model.activeTabIndex] && h("div", { className: "tab-content", style: { minHeight: "200px" } }, 
+          h(PreviewModal, { 
+            model, 
+            hideButtonsOption, 
+            isInline: true 
+          }) 
+        ) 
+      ) 
+    ),
+    h("div", { className: "slds-card__body" },
+      h("div", { className: "slds-scrollable_x sfir-logs-table-container" },
+        h("table", { className: "slds-table slds-table_cell-buffer slds-table_bordered slds-table_striped slds-table_fixed-layout sfir-logs-table" },
           h("colgroup", {},
             h("col", {style: {width: `${cw.checkbox}px`}}),
             h("col", {style: {width: `${cw.user}px`}}),
@@ -1607,16 +1667,16 @@ function PreviewModal({model, hideButtonsOption}) {
   const isFilterProcessing = model.previewFilterProcessing;
 
   // Get filtered log body (with caching)
-  const currentFilter = model.previewFilter || "";
+  const currentFilter = log.previewFilter || "";
   const cacheKey = `${log.id}_${currentFilter}`;
 
   let displayBody;
-  if (model._cachedFilteredBody && model._cachedFilterKey === cacheKey) {
-    displayBody = model._cachedFilteredBody;
+  if (log._cachedFilteredBody && log._cachedFilterKey === cacheKey) {
+    displayBody = log._cachedFilteredBody;
   } else {
     displayBody = model.getFilteredLogBody();
-    model._cachedFilteredBody = displayBody;
-    model._cachedFilterKey = cacheKey;
+    log._cachedFilteredBody = displayBody;
+    log._cachedFilterKey = cacheKey;
   }
 
   // For very large files (>1.5MB), skip Prism highlighting to avoid freezing
@@ -1654,9 +1714,9 @@ function PreviewModal({model, hideButtonsOption}) {
   let processedBody;
   const prismCacheKey = `prism_${cacheKey}_${isLargeFile}_${isFilterProcessing}`;
 
-  if (model._cachedProcessedBody && model._cachedProcessedKey === prismCacheKey) {
+  if (log._cachedProcessedBody && log._cachedProcessedKey === prismCacheKey) {
     // Use cached Prism result
-    processedBody = model._cachedProcessedBody;
+    processedBody = log._cachedProcessedBody;
   } else {
     // Process with Prism and cache the result
     if (!isLargeFile && !isFilterProcessing && window.Prism && window.Prism.highlight) {
@@ -1671,8 +1731,8 @@ function PreviewModal({model, hideButtonsOption}) {
       processedBody = escapeHtml(displayBody);
     }
     // Cache the processed result
-    model._cachedProcessedBody = processedBody;
-    model._cachedProcessedKey = prismCacheKey;
+    log._cachedProcessedBody = processedBody;
+    log._cachedProcessedKey = prismCacheKey;
   }
 
   // Now apply search highlighting on top of Prism's output
@@ -1747,20 +1807,171 @@ function PreviewModal({model, hideButtonsOption}) {
     };
   };
 
-  const {html, count} = applySearchHighlight(processedBody, model.previewSearch.term, model.previewSearch.index);
+  const { html, count } = applySearchHighlight(processedBody, log.previewSearch.term, log.previewSearch.index);
 
   // Update count in model state and adjust index if needed
-  if (model.previewSearch.count !== count) {
-    model.previewSearch.count = count;
-    if (model.previewSearch.index >= count) {
-      model.previewSearch.index = count > 0 ? count - 1 : 0;
+  if (log.previewSearch.count !== count) {
+    log.previewSearch.count = count;
+    if (log.previewSearch.index >= count) {
+      log.previewSearch.index = count > 0 ? count - 1 : 0;
     }
   }
 
   setTimeout(() => {
     const el = document.getElementById("sfir-current-match");
-    if (el) el.scrollIntoView({block: "center"});
+    if (el) el.scrollIntoView({ block: "center" });
   }, 0);
+
+  const content = h("div", { className: "sfir-preview-content" }, 
+    // Large file warning
+  isLargeFile && !isLoading && !isFilterProcessing && h("div", {className: "slds-notify slds-notify_alert slds-alert_warning slds-m-bottom_x-small", role: "alert"},
+    h("span", {className: "slds-icon_container slds-icon-utility-warning slds-m-right_x-small"},
+      h("svg", {className: "slds-icon slds-icon_x-small", "aria-hidden": "true"},
+        h("use", {xlinkHref: "symbols.svg#warning"})
+        )
+      ),
+      h("h2", {},
+      h("span", {className: "slds-text-body_small"},
+          `Large file (${(bodySize / 1024 / 1024).toFixed(2)} MB). Syntax highlighting is disabled to prevent browser crashes. Search and filtering still work.`
+        )
+      )
+    ),
+    // Filter template row
+  h("div", {className: "slds-grid slds-gutters slds-m-bottom_x-small"},
+    h("div", {className: "slds-col"},
+      h("div", {className: "slds-form-element"},
+        h("label", {className: "slds-form-element__label", htmlFor: "sfir-log-filter-template"}, "Filter Template"),
+        h("div", {className: "slds-form-element__control"},
+          h("div", {className: "slds-select_container"},
+              h("select", {
+                id: "sfir-log-filter-template",
+                className: "slds-select",
+                value: log.previewFilter,
+                onChange: (e) => model.applyPreviewFilter(e.target.value),
+                disabled: isLoading || isFilterProcessing
+              },
+            ...model.filterTemplates.map(t => h("option", {key: t.value, value: t.value}, t.label))
+              )
+            )
+          )
+        )
+      ),
+    h("div", {className: "slds-col"},
+      h("div", {className: "slds-form-element"},
+        h("label", {className: "slds-form-element__label", htmlFor: "sfir-log-filter-custom"}, "Custom Filter (use | for OR)"),
+        h("div", {className: "slds-form-element__control"},
+            h("input", {
+              id: "sfir-log-filter-custom",
+              type: "text",
+              className: "slds-input",
+              placeholder: "e.g., USER_DEBUG|EXCEPTION_THROWN",
+              value: log.previewFilter,
+              onChange: (e) => model.applyPreviewFilter(e.target.value),
+              disabled: isLoading || isFilterProcessing
+            })
+          )
+        )
+      )
+    ),
+    // search toolbar
+  h("div", {className: "slds-grid slds-gutters slds-m-bottom_x-small"},
+    h("div", {className: "slds-col"},
+      h("div", {className: "slds-form-element"},
+        h("div", {className: "slds-form-element__control"},
+          h("div", {className: "slds-input-has-icon slds-input-has-icon_left"},
+            h("span", {className: "slds-icon_container slds-input__icon slds-input__icon_left"},
+              h("svg", {className: "slds-icon slds-icon_x-small", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#search"}))
+              ),
+              h("input", {
+                type: "text",
+                placeholder: "Find in log (Ctrl/⌘+F)",
+                className: "slds-input sfir-preview-search-input",
+                defaultValue: log.previewSearch.term,
+                autoComplete: "off",
+                onInput: (e) => model.updatePreviewSearchTermLive(e.target.value),
+                onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); model.nextPreviewMatch(); } },
+                disabled: isLoading || isFilterProcessing
+              })
+            )
+          )
+        )
+      ),
+    h("div", {className: "slds-col slds-grow-none"},
+      h("div", {className: "slds-button_group", role: "group"},
+        h("button", {className: "slds-button slds-button_neutral", onClick: () => model.prevPreviewMatch(), title: "Previous match", disabled: isLoading || isFilterProcessing},
+          h("svg", {className: "slds-button__icon", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#left"}))
+          ),
+        h("button", {className: "slds-button slds-button_neutral", onClick: () => model.nextPreviewMatch(), title: "Next match", disabled: isLoading || isFilterProcessing},
+          h("svg", {className: "slds-button__icon", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#right"}))
+          )
+        ),
+      h("div", {className: "slds-align_absolute-center slds-text-body_small slds-m-top_xx-small sfir-search-counter"}, `${count ? (model.previewSearch.index + 1) : 0} / ${count}`)
+      ),
+      // AI button (conditional)
+    isOptionEnabled("logs-agentforce", hideButtonsOption) && h("div", {className: "slds-col slds-grow-none"},
+        h("button", {
+          className: "slds-button slds-button_brand",
+          onClick: () => model.openAgentforce(),
+          title: "Analyze with Agentforce",
+          disabled: isLoading || isFilterProcessing
+        },
+      h("svg", {className: "slds-button__icon slds-button__icon_left", "aria-hidden": "true"},
+        h("use", {xlinkHref: "symbols.svg#einstein"})
+          ),
+          "Analyze"
+        )
+      )
+    ),
+    // Loading state, filter processing state, or log body
+    isLoading
+    ? h("div", {className: "slds-align_absolute-center slds-m-vertical_xx-large sfir-preview-loading-container"},
+      h("div", {className: "slds-spinner_container sfir-preview-spinner-container"},
+        h("div", {role: "status", className: "slds-spinner slds-spinner_large slds-spinner_brand"},
+          h("span", {className: "slds-assistive-text"}, "Loading log..."),
+          h("div", {className: "slds-spinner__dot-a"}),
+          h("div", {className: "slds-spinner__dot-b"})
+          )
+        ),
+      h("div", {className: "slds-text-heading_small slds-m-top_medium slds-text-align_center"},
+          h("div", {}, "Loading debug log..."),
+        h("div", {className: "slds-text-body_small slds-text-color_weak slds-m-top_x-small"},
+            "Please wait while we fetch the log file"
+          )
+        )
+      )
+      : isFilterProcessing
+      ? h("div", {className: "slds-align_absolute-center slds-m-vertical_xx-large sfir-preview-loading-container"},
+        h("div", {className: "slds-spinner_container sfir-preview-spinner-container"},
+          h("div", {role: "status", className: "slds-spinner slds-spinner_large slds-spinner_brand"},
+            h("span", {className: "slds-assistive-text"}, "Processing filter..."),
+            h("div", {className: "slds-spinner__dot-a"}),
+            h("div", {className: "slds-spinner__dot-b"})
+            )
+          ),
+        h("div", {className: "slds-text-heading_small slds-m-top_medium slds-text-align_center"},
+            h("div", {}, "Applying filter..."),
+          h("div", {className: "slds-text-body_small slds-text-color_weak slds-m-top_x-small"},
+              isLargeFile
+                ? "Processing large file, this may take a moment"
+                : "Please wait"
+            )
+          )
+        )
+        : h("pre", {
+          className: "language-log sfir-preview-code-block",
+          style: isInline ? { maxHeight: "600px" } : undefined 
+        },
+          h("code", {
+            className: "language-log",
+            direction: "ltr", 
+            dangerouslySetInnerHTML: { __html: html }
+          })
+        )
+  ); 
+
+  if (isInline) { 
+    return content; 
+  } 
 
   return h(ConfirmModal, {
     isOpen: true,
@@ -1774,158 +1985,15 @@ function PreviewModal({model, hideButtonsOption}) {
     confirmIconName: "symbols.svg#download",
     onConfirm: () => { model.download(log.id); model.closePreview(); },
     containerClassName: "modalContainer",
-    rootStyle: model.showAgentforceModal ? {display: "none"} : undefined,
+    rootStyle: model.showAgentforceModal ? { display: "none" } : undefined,
     ignoreEsc: model.showAgentforceModal,
     // Enable buttons even during loading
     confirmDisabled: false,
     cancelDisabled: false
-  },
-  // Large file warning
-  isLargeFile && !isLoading && !isFilterProcessing && h("div", {className: "slds-notify slds-notify_alert slds-alert_warning slds-m-bottom_x-small", role: "alert"},
-    h("span", {className: "slds-icon_container slds-icon-utility-warning slds-m-right_x-small"},
-      h("svg", {className: "slds-icon slds-icon_x-small", "aria-hidden": "true"},
-        h("use", {xlinkHref: "symbols.svg#warning"})
-      )
-    ),
-    h("h2", {},
-      h("span", {className: "slds-text-body_small"},
-        `Large file (${(bodySize / 1024 / 1024).toFixed(2)} MB). Syntax highlighting is disabled to prevent browser crashes. Search and filtering still work.`
-      )
-    )
-  ),
-  // Filter template row
-  h("div", {className: "slds-grid slds-gutters slds-m-bottom_x-small"},
-    h("div", {className: "slds-col"},
-      h("div", {className: "slds-form-element"},
-        h("label", {className: "slds-form-element__label", htmlFor: "sfir-log-filter-template"}, "Filter Template"),
-        h("div", {className: "slds-form-element__control"},
-          h("div", {className: "slds-select_container"},
-            h("select", {
-              id: "sfir-log-filter-template",
-              className: "slds-select",
-              value: model.previewFilter,
-              onChange: (e) => model.applyPreviewFilter(e.target.value),
-              disabled: isLoading || isFilterProcessing
-            },
-            ...model.filterTemplates.map(t => h("option", {key: t.value, value: t.value}, t.label))
-            )
-          )
-        )
-      )
-    ),
-    h("div", {className: "slds-col"},
-      h("div", {className: "slds-form-element"},
-        h("label", {className: "slds-form-element__label", htmlFor: "sfir-log-filter-custom"}, "Custom Filter (use | for OR)"),
-        h("div", {className: "slds-form-element__control"},
-          h("input", {
-            id: "sfir-log-filter-custom",
-            type: "text",
-            className: "slds-input",
-            placeholder: "e.g., USER_DEBUG|EXCEPTION_THROWN",
-            value: model.previewFilter,
-            onChange: (e) => model.applyPreviewFilter(e.target.value),
-            disabled: isLoading || isFilterProcessing
-          })
-        )
-      )
-    )
-  ),
-  // search toolbar
-  h("div", {className: "slds-grid slds-gutters slds-m-bottom_x-small"},
-    h("div", {className: "slds-col"},
-      h("div", {className: "slds-form-element"},
-        h("div", {className: "slds-form-element__control"},
-          h("div", {className: "slds-input-has-icon slds-input-has-icon_left"},
-            h("span", {className: "slds-icon_container slds-input__icon slds-input__icon_left"},
-              h("svg", {className: "slds-icon slds-icon_x-small", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#search"}))
-            ),
-            h("input", {
-              type: "text",
-              placeholder: "Find in log (Ctrl/⌘+F)",
-              className: "slds-input sfir-preview-search-input",
-              defaultValue: model.previewSearch.term,
-              autoComplete: "off",
-              onInput: (e) => model.updatePreviewSearchTermLive(e.target.value),
-              onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); model.nextPreviewMatch(); } },
-              disabled: isLoading || isFilterProcessing
-            })
-          )
-        )
-      )
-    ),
-    h("div", {className: "slds-col slds-grow-none"},
-      h("div", {className: "slds-button_group", role: "group"},
-        h("button", {className: "slds-button slds-button_neutral", onClick: () => model.prevPreviewMatch(), title: "Previous match", disabled: isLoading || isFilterProcessing},
-          h("svg", {className: "slds-button__icon", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#left"}))
-        ),
-        h("button", {className: "slds-button slds-button_neutral", onClick: () => model.nextPreviewMatch(), title: "Next match", disabled: isLoading || isFilterProcessing},
-          h("svg", {className: "slds-button__icon", "aria-hidden": "true"}, h("use", {xlinkHref: "symbols.svg#right"}))
-        )
-      ),
-      h("div", {className: "slds-align_absolute-center slds-text-body_small slds-m-top_xx-small sfir-search-counter"}, `${count ? (model.previewSearch.index + 1) : 0} / ${count}`)
-    ),
-    // AI button (conditional)
-    isOptionEnabled("logs-agentforce", hideButtonsOption) && h("div", {className: "slds-col slds-grow-none"},
-      h("button", {
-        className: "slds-button slds-button_brand",
-        onClick: () => model.openAgentforce(),
-        title: "Analyze with Agentforce",
-        disabled: isLoading || isFilterProcessing
-      },
-      h("svg", {className: "slds-button__icon slds-button__icon_left", "aria-hidden": "true"},
-        h("use", {xlinkHref: "symbols.svg#einstein"})
-      ),
-      "Analyze"
-      )
-    )
-  ),
-  // Loading state, filter processing state, or log body
-  isLoading
-    ? h("div", {className: "slds-align_absolute-center slds-m-vertical_xx-large sfir-preview-loading-container"},
-      h("div", {className: "slds-spinner_container sfir-preview-spinner-container"},
-        h("div", {role: "status", className: "slds-spinner slds-spinner_large slds-spinner_brand"},
-          h("span", {className: "slds-assistive-text"}, "Loading log..."),
-          h("div", {className: "slds-spinner__dot-a"}),
-          h("div", {className: "slds-spinner__dot-b"})
-        )
-      ),
-      h("div", {className: "slds-text-heading_small slds-m-top_medium slds-text-align_center"},
-        h("div", {}, "Loading debug log..."),
-        h("div", {className: "slds-text-body_small slds-text-color_weak slds-m-top_x-small"},
-          "Please wait while we fetch the log file"
-        )
-      )
-    )
-    : isFilterProcessing
-      ? h("div", {className: "slds-align_absolute-center slds-m-vertical_xx-large sfir-preview-loading-container"},
-        h("div", {className: "slds-spinner_container sfir-preview-spinner-container"},
-          h("div", {role: "status", className: "slds-spinner slds-spinner_large slds-spinner_brand"},
-            h("span", {className: "slds-assistive-text"}, "Processing filter..."),
-            h("div", {className: "slds-spinner__dot-a"}),
-            h("div", {className: "slds-spinner__dot-b"})
-          )
-        ),
-        h("div", {className: "slds-text-heading_small slds-m-top_medium slds-text-align_center"},
-          h("div", {}, "Applying filter..."),
-          h("div", {className: "slds-text-body_small slds-text-color_weak slds-m-top_x-small"},
-            isLargeFile
-              ? "Processing large file, this may take a moment"
-              : "Please wait"
-          )
-        )
-      )
-      : h("pre", {
-        className: "language-log sfir-preview-code-block"
-      },
-      h("code", {
-        className: "language-log",
-        dangerouslySetInnerHTML: {__html: html}
-      })
-      )
-  );
+  }, content); 
 }
 
-function AgentforceModalWrapper({model}) {
+function AgentforceModalWrapper({ model }) {
   if (!model.showAgentforceModal) return null;
 
   // Footer content to show what Agentforce will analyze (only in view mode, not edit mode)
@@ -2003,9 +2071,7 @@ class App extends React.Component {
       h("div", {className: "slds-m-around_medium"},
         h(Filters, {model}),
         h(LogsTable, {model, hideButtonsOption})
-      ),
-
-      model.previewLog ? h(PreviewModal, {model, hideButtonsOption}) : null,
+      ), 
       model.confirmDeleteId ? h(ConfirmModal, {
         isOpen: true,
         title: "Delete Log",
